@@ -71,6 +71,8 @@ struct Shell {
     #[cfg(windows)]
     tray: Option<daozai::tray::Tray>,
     #[cfg(windows)]
+    screenshot_rx: Option<daozai::screenshots::CaptureReceiver>,
+    #[cfg(windows)]
     autostart: bool,
     /// v0.5.4：蓝牙音频设备（后台线程推送）与音量回声的静默窗口。
     #[cfg(windows)]
@@ -218,6 +220,8 @@ impl Shell {
             #[cfg(windows)]
             tray,
             #[cfg(windows)]
+            screenshot_rx: None,
+            #[cfg(windows)]
             autostart,
             #[cfg(windows)]
             bt_rx: None,
@@ -263,6 +267,38 @@ impl Shell {
         }
         if let Some(t) = &self.tray {
             t.sync(tray::State { pet: self.app.settings.pet, minimal: self.app.settings.minimal, autostart: self.autostart });
+        }
+    }
+
+    #[cfg(windows)]
+    fn take_screenshot(&mut self, ctx: &egui::Context) {
+        if self.screenshot_rx.is_some() {
+            return;
+        }
+        match daozai::screenshots::start(ctx.clone()) {
+            Ok(rx) => self.screenshot_rx = Some(rx),
+            Err(error) => self.app.say(format!("无法截图：{error}")),
+        }
+    }
+
+    #[cfg(windows)]
+    fn poll_screenshot(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        let Some(rx) = &self.screenshot_rx else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("截图任务已中断".into()),
+        };
+        self.screenshot_rx = None;
+        match result {
+            Ok(daozai::screenshots::CaptureOutcome::Saved) => {
+                self.app.refresh_screenshots();
+                self.app.show_page(app::SHELF_PAGE);
+                self.app.say("截图已保存");
+            }
+            Ok(daozai::screenshots::CaptureOutcome::Cancelled) => {}
+            Err(error) => self.app.say(format!("截图失败：{error}")),
         }
     }
 
@@ -378,7 +414,10 @@ impl eframe::App for Shell {
             self.frame_at=Instant::now();
         }
         #[cfg(windows)]
-        self.poll_tray();
+        {
+            self.poll_screenshot();
+            self.poll_tray();
+        }
         #[cfg(windows)]
         let foreground_changed=daozai::native::take_foreground_change();
         #[cfg(windows)]
@@ -725,6 +764,10 @@ impl eframe::App for Shell {
                 Cmd::AddFiles=>{
                     #[cfg(windows)] match daozai::system::pick_files(){Ok(files)=>if !files.is_empty(){self.app.on_drop(files);self.app.show_page(3);},Err(e)=>self.app.say(format!("无法选择文件：{}",e.code()))}
                 },
+                Cmd::TakeScreenshot => {
+                    #[cfg(windows)]
+                    self.take_screenshot(ctx);
+                }
                 Cmd::DragFile(p)=>{
                     #[cfg(windows)] if let Err(e)=daozai::system::drag_file(&p){self.app.say(format!("无法拖出文件：{}",e.code()));}
                     ctx.input_mut(|i| i.pointer=Default::default());

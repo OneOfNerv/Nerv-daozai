@@ -184,6 +184,7 @@ pub enum Cmd {
     DisconnectNotifications,
     ToggleAutostart,
     AddFiles,
+    TakeScreenshot,
     DragFile(PathBuf),
     QuotaRefresh,
     QuotaConnected,
@@ -748,8 +749,10 @@ pub struct App {
     pub(crate) icons: crate::icons::Cache,
     pub(crate) avoidance: crate::avoidance::Picker,
     pub(crate) confirm_clear: Option<f64>,
-    /// 置物架页的两个分栏：0 = 文件，1 = 剪贴板。
+    /// 置物架分栏：0 = 文件，1 = 剪贴板，2 = 截图。
     pub(crate) shelf_tab: usize,
+    pub(crate) screenshots: Vec<PathBuf>,
+    pub(crate) screenshot_first: usize,
     pub clipboard: crate::clipboard::Shared,
     pub(crate) clip_first: usize,
     pub(crate) clip_confirm_clear: Option<f64>,
@@ -942,6 +945,8 @@ impl App {
             icons: Default::default(), avoidance: Default::default(),
             confirm_clear: None,
             shelf_tab: 0,
+            screenshots: crate::screenshots::history(),
+            screenshot_first: 0,
             clipboard: crate::clipboard::Shared::new(clipboard_on),
             clip_first: 0,
             clip_confirm_clear: None,
@@ -1514,6 +1519,12 @@ impl App {
         self.w.tune(OPEN_W.0,OPEN_W.1);self.h.tune(OPEN_H.0,OPEN_H.1);
         self.w.target=PW;self.h.target=self.expanded_height();
     }
+
+    pub fn refresh_screenshots(&mut self) {
+        self.screenshots = crate::screenshots::history();
+        self.screenshot_first = 0;
+    }
+
     pub(crate) fn window_layout(&self)->std::sync::MutexGuard<'_,crate::settings_window::State>{
         self.settings_window.lock().unwrap_or_else(|e|e.into_inner())
     }
@@ -1930,7 +1941,9 @@ impl App {
                                 =>Some((&mut self.todo_first,self.todos.items.len().saturating_sub(3))),
                             3 if clipboard_body
                                 =>Some((&mut self.clip_first,self.clipboard.lock().items.len().saturating_sub(crate::pages::CLIP_ROWS))),
-                            3 if !clipboard_tab && Rect::from_min_max(Pos2::new(36.0,28.0),Pos2::new(383.0,128.0)).contains(cursor)
+                            3 if self.shelf_tab==2 && Rect::from_min_max(Pos2::new(36.0,28.0),Pos2::new(383.0,128.0)).contains(cursor)
+                                =>Some((&mut self.screenshot_first,self.screenshots.len().saturating_sub(crate::pages::SCREENSHOT_SLOTS))),
+                            3 if self.shelf_tab==0 && Rect::from_min_max(Pos2::new(36.0,28.0),Pos2::new(383.0,128.0)).contains(cursor)
                                 =>Some((&mut self.shelf_first,self.shelf.items.len().saturating_sub(5))),
                             _=>None,
                         };
@@ -3022,7 +3035,7 @@ impl App {
             1 => ("番茄", "专注", theme::RED_TOP),
             // 健康页的标题由页面自己画（「健康提醒」+ 喝水/久坐分段切换）。
             2 => return,
-            // 置物架的标题就是「置物架 | 剪贴板」分栏，由页面自己画。
+            // 置物架的分栏由页面自己画。
             3 => return,
             4 => ("待办", "清单", theme::GREEN),
             5 => ("邮箱", "", theme::CYAN),

@@ -32,6 +32,7 @@ mod mail_reader;
 pub mod mail_manage;
 mod mail_manage_ui;
 pub mod clipboard;
+pub mod screenshots;
 pub mod side_dock;
 mod task_picker;
 pub mod model;

@@ -947,6 +947,26 @@ fn settings_keep_dark_buttons_when_system_theme_changes() {
 }
 
 #[test]
+fn screenshot_tab_triggers_capture_and_reopens_saved_file() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut h = H::new();
+    h.app.show_page(crate::app::SHELF_PAGE);
+    h.app.shelf_tab = 2;
+    h.hover(H::local(210.0, 70.0), 1.0);
+    h.click(H::local(318.0, 19.0));
+    assert!(h.cmds.contains(&crate::app::Cmd::TakeScreenshot));
+
+    let dir = crate::screenshots::directory();
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("shot-1795000000000000.png");
+    image::RgbaImage::new(2, 2).save(&path).unwrap();
+    h.app.refresh_screenshots();
+    h.hover(H::local(209.5, 62.0), 0.2);
+    h.click(H::local(209.5, 62.0));
+    assert!(h.cmds.contains(&crate::app::Cmd::Open(path)));
+}
+
+#[test]
 fn expanded_settings_routes_preserve_inline_controls(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for (page,tab) in crate::app::PAGE_SETTINGS_TABS.into_iter().enumerate(){

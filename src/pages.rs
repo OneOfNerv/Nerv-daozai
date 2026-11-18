@@ -10,6 +10,8 @@ use crate::theme::{self, size, W};
 use eframe::egui::{self, Color32, Pos2, Rect};
 use std::f32::consts::{FRAC_PI_2, TAU};
 
+pub(crate) const SCREENSHOT_SLOTS: usize = 5;
+
 /// 剪贴板分栏一屏显示的条数。
 pub(crate) const CLIP_ROWS: usize = 4;
 pub(crate) const MUSIC_VOLUME_RECT: Rect = Rect::from_min_max(Pos2::new(345.0,6.0),Pos2::new(389.0,104.0));
@@ -621,12 +623,11 @@ impl App {
     }
 
     // ================= 置物架 =================
-    /// 标题旁的「文件 | 剪贴板」分栏，返回分栏右边缘。
-    /// 页面标题处的「置物架 | 剪贴板」分栏，返回分栏右边缘。
+    /// 页面标题处的分栏，返回分栏右边缘。
     fn shelf_tabs(&mut self, c: &Card, x: f32) -> f32 {
-        let labels = ["置物架", "剪贴板"];
-        let font = 12.0;
-        let widths: Vec<f32> = labels.iter().map(|l| c.text_w(l, font, W::Bold) + 14.0).collect();
+        let labels = ["置物架", "剪贴板", "截图"];
+        let font = 11.0;
+        let widths: Vec<f32> = labels.iter().map(|l| c.text_w(l, font, W::Bold) + 8.0).collect();
         let total = widths.iter().sum::<f32>() + 4.0;
         c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN);
         let mut left = x + 2.0;
@@ -644,6 +645,9 @@ impl App {
                 self.shelf_tab = i;
                 self.confirm_clear = None;
                 self.clip_confirm_clear = None;
+                if i == 2 {
+                    self.refresh_screenshots();
+                }
             }
             left += w;
         }
@@ -658,6 +662,10 @@ impl App {
         self.shelf_tabs(c, 13.0);
         if self.shelf_tab == 1 {
             self.page_clipboard(c, env, cmds);
+            return;
+        }
+        if self.shelf_tab == 2 {
+            self.page_screenshots(c, cmds);
             return;
         }
         c.text(344.0,23.0,"添加",size::SMALL,W::Regular,theme::GRAY,H::Right);
@@ -772,6 +780,68 @@ impl App {
             });
             if delete { self.shelf.remove(p); self.icons.remove(p); self.shelf_x.remove(p); self.shelf_born.remove(p); self.shelf_first=self.shelf_first.min(self.shelf.items.len().saturating_sub(5)); }
             else if r.clicked() { if p.exists(){cmds.push(Cmd::Open(p.clone()));} else {self.say("文件已移动或删除，可从置物架移除");} }
+        }
+    }
+
+    fn page_screenshots(&mut self, c: &Card, cmds: &mut Vec<Cmd>) {
+        let (button, bc) = capsule(c, 306.0, 9.5, 45.0, 20.0, "take-screenshot", theme::BTN, theme::BTN_HOVER);
+        bc.centered_text(328.5, 19.5, "截屏", size::SMALL, W::Semibold, theme::WHITE, H::Center);
+        if button.on_hover_text("拖动选择截图区域").clicked() {
+            cmds.push(Cmd::TakeScreenshot);
+        }
+
+        let count = self.screenshots.len();
+        if count == 0 {
+            c.dashed(42.0, 32.0, 335.0, 91.0, 12.0, 1.2, Color32::from_gray(70), 0.0);
+            c.text(209.5, 72.0, "还没有截图", 12.0, W::Semibold, theme::WHITE, H::Center);
+            c.text(209.5, 93.0, "最近 30 张截图会暂存在本机", size::TINY, W::Regular, theme::GRAY, H::Center);
+            return;
+        }
+
+        let first = self.screenshot_first.min(count.saturating_sub(SCREENSHOT_SLOTS));
+        let end = (first + SCREENSHOT_SLOTS).min(count);
+        let paths = self.screenshots[first..end].to_vec();
+        let mut delete = None;
+        for (i, path) in paths.iter().enumerate() {
+            let x = 209.5 + (i as f32 - (paths.len() - 1) as f32 / 2.0) * 68.0;
+            let tile = c.hit_drag(x - 31.0, 32.0, 62.0, 74.0, ("screenshot", path));
+            let (hover, _) = c.hover_t(&tile);
+            if hover > 0.01 {
+                c.fill(x - 31.0, 32.0, 62.0, 74.0, 8.0, Color32::from_white_alpha((16.0 * hover) as u8));
+            }
+            self.file_icon_at(c, path, x, 62.0, 57.0);
+            let date = crate::screenshots::label(path);
+            c.text(x, 100.0, &date, size::TINY, W::Regular, theme::WHITE, H::Center);
+            if tile.clicked() {
+                cmds.push(Cmd::Open(path.clone()));
+            }
+            if tile.drag_started() && path.is_file() {
+                cmds.push(Cmd::DragFile(path.clone()));
+            }
+            tile.context_menu(|ui| {
+                if ui.button("在文件夹中显示").clicked() {
+                    cmds.push(Cmd::Reveal(path.clone()));
+                    ui.close_menu();
+                }
+                if ui.button("删除暂存截图").clicked() {
+                    delete = Some(path.clone());
+                    ui.close_menu();
+                }
+                self.shelf_menu_rect = Some(egui::Frame::menu(ui.style()).widget_rect(ui.min_rect()));
+            });
+        }
+        if count > SCREENSHOT_SLOTS {
+            c.text(209.5, 121.0, &format!("{}–{end} / {count} · 滚轮查看", first + 1), size::TINY, W::Regular, theme::DIM, H::Center);
+        }
+        if let Some(path) = delete {
+            match crate::screenshots::remove(&path) {
+                Ok(()) => {
+                    self.icons.remove(&path);
+                    self.screenshots.retain(|item| item != &path);
+                    self.screenshot_first = first.min(self.screenshots.len().saturating_sub(SCREENSHOT_SLOTS));
+                }
+                Err(_) => self.say("无法删除截图，请关闭正在使用它的程序后重试"),
+            }
         }
     }
 
