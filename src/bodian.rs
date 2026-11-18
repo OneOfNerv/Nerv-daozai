@@ -363,12 +363,12 @@ fn discovery_due(last:Option<Instant>,hint:impl FnOnce()->bool)->bool{
     since.is_none_or(|since|since>=DISCOVER_FALLBACK) || since.is_some_and(|since|since>=DISCOVER_HINTED) && hint()
 }
 
-/// 便宜的线索：波点（Flutter 程序）的主窗口属于 bodian_pc.exe。窗口类名若被改，仍有 30 秒一次的兜底查找。
+/// 窗口类名若被改，仍有 30 秒一次的兜底查找。
 fn window_hint()->bool{
     use windows::{core::{w,PCWSTR},Win32::{Foundation::HWND,UI::WindowsAndMessaging::{FindWindowExW,GetWindowThreadProcessId}}};
     let mut after=HWND::default();
     for _ in 0..16 {
-        let Ok(window)=(unsafe{FindWindowExW(HWND::default(),after,w!("FLUTTER_RUNNER_WIN32_WINDOW"),PCWSTR::null())})else{return false;};
+        let Ok(window)=(unsafe{FindWindowExW(HWND::default(),after,w!("BODIAN_FLUTTER_WIN32_WINDOW"),PCWSTR::null())})else{return false;};
         let mut pid=0;unsafe{GetWindowThreadProcessId(window,Some(&mut pid));}
         if super::player_process::image_is(pid,"bodian_pc.exe"){return true;}
         after=window;
